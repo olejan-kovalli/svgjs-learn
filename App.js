@@ -1,12 +1,15 @@
 var draw;
 var hubs = {};
 var lines = {};
+var conn = [];
 
 var hubAtPtr;
+var lineAtPtr;
 
 var isConnMode = false;
 
-var selectedId;
+var selectedHubId;
+var selectedLineId;
 
 var connFromId;
 
@@ -14,45 +17,17 @@ var connLine;
 
 var potConnToId;
 
-var conn = []
+const inactive_color = 'gray'
+const restricted_color = '#DC143C'
+const default_color = 'blue'
+const conn_hl_color = '#00FF00'
+const selection_color = 'orange'
 
-function onDeselectClick() {
-    if (!selectedId)
-        return;
+const default_hub_radius = 10;
+const hover_hub_radius = 12;
 
-    selectedHub = hubs[selectedId];
-    selectedHub.attr({ 'stroke-width': 0 })
-    selectedHub.attr({ stroke: 'blue' })
-    selectedHub.draggable(false);
-
-    selectedId = undefined;
-}
-
-function onHubDblClick(id) {
-
-    hubs[id].remove();
-    delete hubs[id];
-
-    for(let i=conn.length - 1; i>=0; i--) {
-        var cn = conn[i];
-        console.log(conn);
-
-        if (cn[0] === id || cn[1] === id){
-            var line = lines[cn[2]]; 
-            line.remove();
-            delete lines[cn[2]];    
-            
-            conn.splice(i, 1)
-        }
-
-        console.log(conn);
-    }
-
-    selectedId = undefined;
-
-    isConnMode = false;
-    hubAtPtr = undefined;
-}
+const default_line_width = 3;
+const hover_line_width = 6;
 
 function getNextHubId() {
     if (hubs && Object.keys(hubs).length > 0)
@@ -68,30 +43,116 @@ function getNextLineId() {
         return 100;
 }
 
-function onNodeClick(id) {
-    if (selectedId) {
-        selectedHub = hubs[selectedId];
-        selectedHub.attr({ stroke: 'blue' })
-        selectedHub.attr({ 'stroke-width': 0 })
-        selectedHub.draggable(false);
-    }
-
-    if (id !== selectedId) {
-        selectedId = id;
-
-        selectedHub = hubs[selectedId];
-        selectedHub.attr({ stroke: 'orange' })
-        selectedHub.attr({ 'stroke-width': 3 })
-        
-        selectedHub.draggable()
-    }
-    else {
-        selectedId = undefined;
+function onLineMouseOver(id) {
+    lineAtPtr = id;
+    if (!isConnMode) {
+        lines[id].attr({ 'stroke-width': hover_line_width });
     }
 }
 
-function onNodeMouseDown(id) {
-    if (id == selectedId)
+function onLineMouseOut(id) {
+    lineAtPtr = undefined;
+    if (!isConnMode) {
+        lines[id].attr({ 'stroke-width': default_line_width });
+    }
+}
+
+function selectLine(id) {
+    if (id) {
+        selectedLine = lines[id];
+        selectedLine.attr({ stroke: selection_color });
+        
+        selectedLineId = id;
+    }
+}
+
+function deselectSelectedLine() {
+    if (selectedLineId) {
+        selectedLine = lines[selectedLineId];
+        selectedLine.attr({ stroke: default_color })
+        
+        selectedLineId = undefined;
+    }
+}
+
+function selectHub(id) {
+    if (id) {
+        selectedHub = hubs[id];
+        selectedHub.attr({ fill: selection_color })
+
+        selectedHub.draggable();
+
+        selectedHubId = id;
+    }
+}
+
+function deselectSelectedHub() {
+    if (selectedHubId) {
+        selectedHub = hubs[selectedHubId];
+        selectedHub.attr({ fill: default_color })
+
+        selectedHub.draggable(false);
+        
+        selectedHubId = undefined;
+    }
+}
+
+function onLineClick(id) {
+    deselectSelectedHub();
+
+    var saved_slid = selectedLineId;
+    deselectSelectedLine();
+    
+    if (id !== saved_slid)
+        selectLine(id);
+}
+
+function onLineDblClick(id) {
+
+    lines[id].remove();
+    delete lines[id];
+
+    conn = conn.filter(cn => cn[2] !== id);
+
+    selectedLineId = undefined;
+    lineAtPtr = undefined;
+
+    isConnMode = false;
+}
+
+function onHubClick(id) {
+    deselectSelectedLine();
+
+    var saved_shid = selectedHubId;
+    deselectSelectedHub();
+    
+    if (id !== saved_shid)
+        selectHub(id);
+}
+
+function onHubDblClick(id) {
+
+    hubs[id].remove();
+    delete hubs[id];
+
+    var conn_to_remove = conn.filter(cn => cn[0] === id || cn[1] === id);
+    console.log(conn_to_remove);
+    for (var cn of conn_to_remove) {
+        lines[cn[2]].remove();
+        delete lines[cn[2]];
+    }
+
+    conn = conn.filter(cn => !conn_to_remove.includes(cn));
+
+    selectedLineId = undefined;
+    selectedHubId = undefined;
+    hubAtPtr = undefined;
+
+    isConnMode = false;
+}
+
+function onHubMouseDown(id) {
+    if (id == selectedHubId)
         return;
 
     isConnMode = true;
@@ -102,48 +163,82 @@ function onNodeMouseDown(id) {
     var cx = hub.cx()
     var cy = hub.cy()
 
-    connLine = draw.line(cx, cy, cx, cy).stroke({ width: 3 }).attr({ stroke: 'gray' })
+    connLine = draw.line(cx, cy, cx, cy);
+    connLine.attr({ stroke: inactive_color, 'stroke-width': default_line_width })
 
     connLine.insertBefore(hubs[Object.keys(hubs)[0]]);
 }
 
-function onNodeMouseUp(id) {
-    if (isConnMode && id !== connFromId) {
-        var hub = hubs[id]; 
-        connLine.attr({x2: hub.cx()});
-        connLine.attr({y2: hub.cy()});
-        connLine.attr({stroke: 'blue'});
-        var lineId = getNextLineId();
-        lines[lineId] = connLine;
-        conn.push([connFromId, id, lineId]);
-        connLine = undefined;
-        isConnMode = false;
-        
-        if (potConnToId)
-            hubs[potConnToId].attr({ fill: 'blue' });
+function onHubMouseUp(id) {
+    if (!isConnMode)
+        return;
+    
+    if (id === connFromId)
+        return;
+ 
+    hubs[id].attr({ fill: default_color });
+ 
+    var isConnWithFrom = conn.filter(cn => 
+        (cn[0] === connFromId && cn[1] === id) || 
+        (cn[0] === id && cn[1] === connFromId)).length > 0;
+    
+    if (isConnWithFrom) {
+        return;
     }
 
-    console.log('conn', conn);
+    var hub = hubs[id]; 
+    connLine.attr({x2: hub.cx()});
+    connLine.attr({y2: hub.cy()});
+    connLine.attr({stroke: 'blue'});
+    
+    var lineId = getNextLineId();
+    
+    connLine.mouseover(() => onLineMouseOver(lineId));
+    connLine.mouseout(() => onLineMouseOut(lineId));
+    connLine.click(() => onLineClick(lineId));
+    connLine.dblclick(() => onLineDblClick(lineId));
+    
+    lines[lineId] = connLine;
+    
+    conn.push([connFromId, id, lineId]);
+    
+    connLine = undefined;
+    isConnMode = false;
+    connFromId = undefined;
 }
 
-function onNodeMouseOver(id) {
+function onHubMouseOver(id) {
     hubAtPtr = id;
 
-    if (isConnMode && id !== connFromId) {
-        potConnToId = id;
-        hubs[id].attr({ fill: 'green' });
-        connLine.attr({ stroke: 'green' });
+    if (isConnMode && id !== connFromId ) {
+        var isConnWithFrom = conn.filter(cn => 
+            (cn[0] === connFromId && cn[1] === id) || 
+            (cn[0] === id && cn[1] === connFromId)).length > 0;
+        
+        if (isConnWithFrom){
+            hubs[id].attr({ fill: restricted_color });
+            connLine.attr({ stroke: restricted_color });
+        }
+        else {
+            potConnToId = id;
+            hubs[id].attr({ fill: conn_hl_color });
+            connLine.attr({ stroke: conn_hl_color });
+        }
     }
+
+    hubs[id].radius(hover_hub_radius);
 }
 
-function onNodeMouseOut(id) {
+function onHubMouseOut(id) {
     hubAtPtr = undefined;
 
-    hubs[id].attr({ fill: 'blue' });
-
-    if (isConnMode && id !== connFromId) {
-        connLine.attr({ stroke: 'gray' });
+    if (isConnMode) {
+        hubs[id].attr({ fill: default_color });
+        if (id !== connFromId)
+            connLine.attr({ stroke: inactive_color });
     }
+
+    hubs[id].radius(default_hub_radius);
 }
 
 function onHubDragMove(id) {
@@ -169,38 +264,44 @@ function onDrawMouseUp(e){
         connLine.remove();
     }
 
-    console.log(isConnMode);
-
     if (isConnMode) {
         isConnMode = false;
     }
     else {
-        if (!hubAtPtr) {
-            var hub = draw.circle(20, 20).center(e.offsetX,e.offsetY).attr({ fill: 'blue' })
+        if (!hubAtPtr && !lineAtPtr) {
+            var diam = 2 * default_hub_radius;
+            var hub = draw.circle(diam, diam)
+            hub.center(e.offsetX,e.offsetY)
+            hub.attr({ fill: default_color })
             var id = getNextHubId();
 
-            hub.mousedown(() => onNodeMouseDown(id));
-            hub.mouseup(() => onNodeMouseUp(id));
-            //circ.mouseup(() => isDragMode = false);
+            hub.mousedown(() => onHubMouseDown(id));
+            hub.mouseup(() => onHubMouseUp(id));
 
-            hub.mouseover(() => onNodeMouseOver(id));
-            hub.mouseout(() => onNodeMouseOut(id));
+            hub.mouseover(() => onHubMouseOver(id));
+            hub.mouseout(() => onHubMouseOut(id));
 
             hub.dblclick(() => onHubDblClick(id));
             
             hub.on('dragstart.namespace', () => isConnMode = false);
             hub.on('dragmove.namespace', () => onHubDragMove(id));
 
-            hub.click(() => onNodeClick(id));
+            hub.click(() => onHubClick(id));
             hubs[id] = hub;
-        }
 
+            console.log(hub);
+        }
     }
 }
 
 function onDrawMouseMove(e){
     if (isConnMode) {
-        //console.log(isConnectMode, e.offsetX, e.offsetY);
+        if (selectedHubId)
+            deselectSelectedHub();
+        
+        if (selectedLineId)
+            deselectSelectedLine();
+
         var x1 = connLine.attr('x1');
         var y1 = connLine.attr('y1');
 
