@@ -6,10 +6,10 @@ const default_line_width = 3;
 const hover_line_width = 6;
 
 //--------colors--------
-const default_color = 'blue'
+const default_color = '#1E90FF'
 const selected_color = 'orange'
 
 const forbidden_color = '#DC143C'
-const allowed_color = '#00FF00'
+const allowed_color = '#9ACD32'
 
 const inactive_color = 'gray'
